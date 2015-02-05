@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include "err/err.h"
 
 enum { STACKSIZE = 30000 };
 
@@ -21,43 +23,65 @@ load(FILE *fin) {
 	}
 	program[i] = c;
     }
+
+    return program;
 }
 
-const char *
-execute(const char **sp, const char op) {
+int
+execute(const char *program, char **sp, int pc) {
+    const char op = program[pc];
     switch (op) {
 	case '>':
 	    ++*sp;
+	    break;
 	case '<':
 	    --*sp;
+	    break;
 	case '+':
 	    ++**sp;
+	    break;
 	case '-':
 	    --**sp;
+	    break;
 	case '.':
 	    putchar(**sp);
+	    break;
 	case ',':
 	    **sp = getchar();
+	    break;
+	case '\0':
+	    return 0;
+	    break;
+	case '\n':
+	    break;
+	case ' ':
+	    break;
+
 	case '[':
 	case ']':
-	default:
-	    return (const char *) -1;
+	default: 
+	    return -1;
+    }
 
-
+    return pc;
+}
 
 int
 run(const char *program) {
     char base[STACKSIZE] = { 0 };
     char *sp = base;
-    const char *pc = program;
+    int pc;
 
-    while ((pc = execute(&sp, program[pc])) != -1)
-	;
+    for (pc = 0; (pc = execute(program, &sp, pc)); ++pc) {
+	if (pc == -1)
+	    warn("illegal instruction");
+    }
 
     return pc;
 }
 
 
+int
 main(int argc, char **argv) {
     char *filename;
     const char *program;
@@ -75,11 +99,15 @@ main(int argc, char **argv) {
 	    program = load(fin);
 	    fclose(fin);
 	    run(program);
-	    free(program);
+	    if (program)
+		free(program);
 	}
     } else {
 	program = load(stdin);
 	run(program);
+	if (program) 
+	    free(program);
     }
+
     return status;
 }
