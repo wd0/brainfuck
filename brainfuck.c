@@ -3,11 +3,21 @@
 #include "err/err.h"
 
 enum { STACKSIZE = 30000 };
+enum { EXEC_MEMERR = -4, BF_ERR = -3, EXEC_ILL = -2, EXEC_DONE = -1 };
 
+typedef struct {
+    const char *name;
+    const char *text;
+    char *stack;
+    char *sp;
+    int pc;
+} Prog;
+
+/* Program flow: */
 /* load: A program is read completely in from a file. */
+/* run: all of a program's instructions are executed. */
 /* execute: A single instruction is executed, modifying the stack pointer,
    the stack, or the program counter. */
-/* run: all of a program's instructions are run. */
 
 const char *
 load(FILE *fin) {
@@ -29,7 +39,6 @@ load(FILE *fin) {
     return text;
 }
 
-enum { BF_ERR = -3, EXEC_ILL = -2, EXEC_DONE = -1 };
 
 char
 peek(char *sp) {
@@ -37,6 +46,8 @@ peek(char *sp) {
 }
 
 /* Function pointers */
+typedef int (*Fcond)(int n);
+
 int
 unconditional(int n) {
     return (n = 1);
@@ -52,18 +63,6 @@ isnonzero(int n) {
     return n != 0;
 }
 /* End function pointers */
-
-typedef struct {
-    const char *text;
-    char *stack;
-    char *sp;
-    int pc;
-} Prog;
-
-typedef int (*Fcond)(int n);
-
-/* TODO: This currently jumps to the 'next' bracket it finds. It needs to jump
-   to the -matching- bracket. */
 
 int
 jmp(const char *text, int pc, char *sp, Fcond cond) {
@@ -120,15 +119,20 @@ got_offset:
 }
 
 int
-execute(const char *text, char **sp, int pc) {
+execute(const char *text, const char *stack, char **sp, int pc) {
+
     const char op = text[pc];
     switch (op) {
-	/* Ops */
+	/* Operators */
 	case '>':
 	    ++*sp;
+	    if ((long)(*sp - stack) + 1 > STACKSIZE)
+		return EXEC_MEMERR;
 	    break;
 	case '<':
 	    --*sp;
+	    if (*sp < stack)
+		return EXEC_MEMERR;
 	    break;
 	case '+':
 	    ++**sp;
@@ -149,7 +153,7 @@ execute(const char *text, char **sp, int pc) {
 	    pc = jmp(text, pc, *sp, isnonzero);
 	    break;
 
-	    /* Special */
+	/* Special */
 	case '\0':
 	    return EXEC_DONE;
 	    break;
@@ -168,16 +172,21 @@ run(Prog *p) {
     p->sp = p->stack;
     int status; 
 
-    for (p->pc = 0; (p->pc = execute(p->text, &p->sp, p->pc)) != EXEC_DONE; ++p->pc) {
-	warn("p->sp = %p", p->sp);
+    for (p->pc = 0; 
+	    (p->pc = execute(p->text, p->stack, &p->sp, p->pc)) != EXEC_DONE;
+	    ++p->pc) {
 	if (p->pc <= -2) {
 	    if (p->pc == EXEC_ILL) {
-		warn("illegal instruction `%c'", p->text[p->pc]);
+		warn("%s: illegal instruction `%c'", p->name, p->text[p->pc]);
 		break;
 	    } else if (p->pc == BF_ERR) {
-		warn("brainfuck interpreter error: instruction `%c' failed", p->text[p->pc]);
+		warn("%s: brainfuck interpreter error: instruction `%c' failed", p->name, p->text[p->pc]);
+		break;
+	    } else if (p->pc == EXEC_MEMERR) {
+		warn("%s: memory access %p out of bounds", p->name, p->sp);
 		break;
 	    }
+	   
 	}
     }
 
@@ -185,10 +194,9 @@ run(Prog *p) {
     return status;
 }
 
-
 int
 main(int argc, char **argv) {
-    char *filename;
+    const char *filename;
     FILE *fin;
     int status = 0;
 
@@ -205,15 +213,17 @@ main(int argc, char **argv) {
 	    }
 	    p->text = load(fin);
 	    fclose(fin);
+	    p->name = filename;
 	    run(p);
 	    if (p->text)
-		free(p->text);
+		free((void *)p->text);
 	}
     } else {
 	p->text = load(stdin);
+	p->name = "stdin";
 	run(p);
 	if (p->text) 
-	    free(p->text);
+	    free((void *)p->text);
     }
 
     return status;
