@@ -8,8 +8,7 @@ all:
 	${CC} -o ${NAME} ${CFLAGS} ${SRC} 
 
 test: all
-	./${NAME} test.b
-
+	./${NAME} test/*.bf
 
 clean:
 	rm -f ${NAME}

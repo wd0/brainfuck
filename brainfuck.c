@@ -11,9 +11,9 @@ enum { STACKSIZE = 30000 };
 
 const char *
 load(FILE *fin) {
-    enum { DEFAULT_BUFSIZE = 8 };
-    char *text = emalloc(DEFAULT_BUFSIZE);
-    size_t bufsize = DEFAULT_BUFSIZE; 
+    enum { DEFAULT_TEXTSIZE = 128 };
+    char *text = emalloc(DEFAULT_TEXTSIZE);
+    size_t bufsize = DEFAULT_TEXTSIZE; 
     size_t i;
     int c;
 
@@ -58,7 +58,6 @@ typedef struct {
     char *stack;
     char *sp;
     int pc;
-    int nesting;
 } Prog;
 
 typedef int (*Fcond)(int n);
@@ -67,7 +66,7 @@ typedef int (*Fcond)(int n);
    to the -matching- bracket. */
 
 int
-jmp(const char *text, int pc, char *sp, char direction, Fcond cond) {
+jmp(const char *text, int pc, char *sp, Fcond cond) {
     int offset = 0;
     int nesting = 0;
     int i;
@@ -75,67 +74,50 @@ jmp(const char *text, int pc, char *sp, char direction, Fcond cond) {
     if (!cond(peek(sp)))
 	return pc;
 
-    switch (direction) {
-	case '>':
-	warn("jmp(pc = %d, '<')", pc);
-	for (i = pc + 1; ;  ++i) {
-	    putchar(text[i]);
-	    if (text[i] == ']' && nesting == 0) {
-		    offset = i - pc; 
-		    warn("offset = %d;", offset);
-		    return pc + offset;
-	    } else if (text[i] == ']') {
-		warn("(--) nesting = %d", nesting);
-		--nesting;
-	    } else if (text[i] == '[') {
-		warn("(++) nesting = %d", nesting);
-		++nesting;
+    switch (text[pc]) {
+	/* Jump forwards to matching ']'. */
+	case '[':
+	    for (i = pc + 1; text[i];  ++i) {
+		if (text[i] == ']' && nesting == 0) {
+		    offset = (i - pc - 1) - 1; 
+		    goto got_offset; 
+		} else if (text[i] == ']') {
+		    --nesting;
+		} else if (text[i] == '[') {
+		    ++nesting;
+		} 
 	    }
-	}
-	if (text[i] == '\0')
-	    return EXEC_ILL; /* No closing ']' */
-	break; 
+	    if (text[i] == '\0')
+		return EXEC_ILL; /* No closing ']' */
+	    break; 
 
-	case '<':
-	warn("jmp(pc = %d, '<')", pc);
-	for (i = pc - 1; i >= 0; --i) {
-	    putchar(text[i]);
-	    if (text[i] == '[' && nesting == 0) {
-		offset = -(pc - i); 
-		warn("offset = %d", offset);
-		return offset;
-	    } else if (text[i] == '[') {
-		warn("(--) nesting = %d", nesting);
-		--nesting;
-	    } else if (text[i] == ']') {
-		warn("(++) nesting = %d", nesting);
-		++nesting;
-	    } 
+	    /* Jump backwards to matching '['. */
+	case ']':
+	    for (i = pc - 1; i >= 0; --i) {
+		if (text[i] == '[' && nesting == 0) {
+		    offset = -(pc - i - 1) - 1; 
+		    goto got_offset; 
+		} else if (text[i] == '[') {
+		    --nesting;
+		} else if (text[i] == ']') {
+		    ++nesting;
+		} 
 
-	}
-	if (i < 0)
-	    return EXEC_ILL; /* No opening '[' */
-	break;
+	    }
+	    if (i < 0)
+		return EXEC_ILL; /* No opening '[' */
+	    break;
 
 	default: 
-	    warn("jmp(..., %c): not a legal jmp call", direction);
+	    warn("jmp(%c): not a legal jmp call", text[pc]);
 	    return BF_ERR; 
-	}
+	    break;
+    }
 
-    warn("ret = %d", pc + offset);
+got_offset:
     return pc + offset;
+
 }
-
-/*
-   int
-   jz(const char *program, int pc, char *sp, char *direction) {
-   if (peek(sp) == 0)
-   }
-
-   int
-   jnz(const char *program, int pc, char *sp, char *direction) {
-   }
- */
 
 int
 execute(const char *text, char **sp, int pc) {
@@ -161,16 +143,17 @@ execute(const char *text, char **sp, int pc) {
 	    **sp = getchar();
 	    break;
 	case '[':
-	    pc = jmp(text, pc, *sp, '>', iszero);
+	    pc = jmp(text, pc, *sp, iszero);
 	    break;
 	case ']':
-	    pc = jmp(text, pc, *sp, '<', isnonzero);
+	    pc = jmp(text, pc, *sp, isnonzero);
 	    break;
 
 	    /* Special */
 	case '\0':
 	    return EXEC_DONE;
 	    break;
+
 	default: 
 	    break;
     }
@@ -183,23 +166,22 @@ run(Prog *p) {
     char base[STACKSIZE] = { 0 };
     p->stack = base;
     p->sp = p->stack;
-    p->nesting = 0;
-
     int status; 
 
-    for (p->pc = 0; (p->pc = execute(p->text, &p->stack, p->pc)) != EXEC_DONE; ++p->pc) {
-	if (p->pc <= -2)
+    for (p->pc = 0; (p->pc = execute(p->text, &p->sp, p->pc)) != EXEC_DONE; ++p->pc) {
+	warn("p->sp = %p", p->sp);
+	if (p->pc <= -2) {
 	    if (p->pc == EXEC_ILL) {
 		warn("illegal instruction `%c'", p->text[p->pc]);
 		break;
+	    } else if (p->pc == BF_ERR) {
+		warn("brainfuck interpreter error: instruction `%c' failed", p->text[p->pc]);
+		break;
 	    }
-	if (p->pc == BF_ERR) {
-	    warn("brainfuck interpreter error: instruction `%c' failed", p->text[p->pc]);
-	    break;
 	}
     }
-    status = p->pc;
 
+    status = p->pc;
     return status;
 }
 
