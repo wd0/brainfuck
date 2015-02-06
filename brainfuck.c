@@ -11,26 +11,56 @@ enum { STACKSIZE = 30000 };
 
 const char *
 load(FILE *fin) {
-    char *program = emalloc(1);
-    size_t bufsize = 1;
+    enum { DEFAULT_BUFSIZE = 8 };
+    char *program = emalloc(DEFAULT_BUFSIZE);
+    size_t bufsize = DEFAULT_BUFSIZE; 
     size_t i;
     int c;
 
     for (i = 0; (c = fgetc(fin)) != EOF; ++i) {
-	if (bufsize - 1 <= i) { 
+	if (bufsize - 2 <= i) { 
 	    bufsize *= 2;
 	    program = realloc(program, bufsize);
 	}
 	program[i] = c;
     }
+    program[i] = '\0';
 
     return program;
+}
+
+enum { EXEC_ILL = -2, EXEC_DONE = -1 };
+int
+jmp(const char *program, int pc, char direction) {
+    int offset;
+    int i;
+
+    if (direction == '>') {
+	for (i = pc; program[i]; ++i)
+	    if (program[i] == ']') {
+		offset = (i - pc) + 1; 
+		break;
+	    }
+	if (program[i] == '\0')
+	    return EXEC_ILL; /* No closing ']' */
+    } else if (direction == '<') {
+	for (i = pc; i >= 0; --i)
+	    if (program[i] == '[') {
+		offset = (i - pc) - 1; 
+		break;
+	    }
+	if (i == 0)
+	    return EXEC_ILL; /* No opening '[' */
+    }
+
+    return pc;
 }
 
 int
 execute(const char *program, char **sp, int pc) {
     const char op = program[pc];
     switch (op) {
+    	/* Ops */
 	case '>':
 	    ++*sp;
 	    break;
@@ -49,18 +79,25 @@ execute(const char *program, char **sp, int pc) {
 	case ',':
 	    **sp = getchar();
 	    break;
-	case '\0':
-	    return 0;
+	case '[':
+	    pc = jmp(program, pc, '>');
 	    break;
+	case ']':
+	    pc = jmp(program, pc, '<');
+	    break;
+
+	/* Ignore */
 	case '\n':
 	    break;
 	case ' ':
 	    break;
 
-	case '[':
-	case ']':
+	/* Special */
+	case '\0':
+	    return EXEC_DONE;
+	    break;
 	default: 
-	    return -1;
+	    return EXEC_ILL;
     }
 
     return pc;
@@ -72,9 +109,11 @@ run(const char *program) {
     char *sp = base;
     int pc;
 
-    for (pc = 0; (pc = execute(program, &sp, pc)); ++pc) {
-	if (pc == -1)
-	    warn("illegal instruction");
+    for (pc = 0; (pc = execute(program, &sp, pc)) != EXEC_DONE; ++pc) {
+	if (pc == EXEC_ILL) {
+	    warn("illegal instruction `%c'", program[pc]);
+	    break;
+	}
     }
 
     return pc;
