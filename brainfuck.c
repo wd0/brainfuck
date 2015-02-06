@@ -57,7 +57,7 @@ isnonzero(int n) {
 
 int
 jmp(const char *text, int *pc, char *sp, Fcond jmpcond) {
-    int offset = 0;
+    int offset = 1; /* Start looking at the next instruction. */
     int nesting = 0;
     int status = 0;
     int i;
@@ -68,10 +68,10 @@ jmp(const char *text, int *pc, char *sp, Fcond jmpcond) {
     switch (text[*pc]) {
 	/* Jump forwards to matching ']'. */
 	case '[':
-	    for (i = *pc + 1; text[i];  ++i) {
+	    for (i = *pc + 1; text[i];  ++i, ++offset) {
 		if (text[i] == ']' && nesting == 0) {
-		    offset = (i - *pc - 1) - 1; 
 		    *pc += offset;
+		    break;
 		} else if (text[i] == ']') {
 		    --nesting;
 		} else if (text[i] == '[') {
@@ -84,10 +84,10 @@ jmp(const char *text, int *pc, char *sp, Fcond jmpcond) {
 
 	/* Jump backwards to matching '['. */
 	case ']':
-	    for (i = *pc - 1; i >= 0; --i) {
+	    for (i = *pc - 1; i >= 0; --i, ++offset) {
 		if (text[i] == '[' && nesting == 0) {
-		    offset = -(*pc - i - 1) - 1; 
-		    *pc += offset;
+		    *pc -= offset;
+		    break;
 		} else if (text[i] == '[') {
 		    --nesting;
 		} else if (text[i] == ']') {
@@ -117,17 +117,13 @@ execute(const char *text, const char *stack, char **sp, int *pc) {
 	/* Operators */
 	case '>':
 	    ++*sp;
-	    if ((long)(*sp - stack) + 1 > STACKSIZE) {
+	    if ((long)(*sp - stack) + 1 > STACKSIZE) 
 		status = EXEC_MEMERR;
-		--*sp;
-	    }
 	    break;
 	case '<':
 	    --*sp;
-	    if (*sp < stack) {
+	    if (*sp < stack) 
 		status = EXEC_MEMERR;
-		++*sp;
-	    }
 	    break;
 	case '+':
 	    ++**sp;
@@ -176,7 +172,7 @@ run(const char *text, const char *name) {
 	    } else if (status == BF_ERR) {
 		warn("%s: text[%d]: brainfuck interpreter error", name, pc);
 		break;
-	    } else if (pc == EXEC_MEMERR) {
+	    } else if (status == EXEC_MEMERR) {
 		warn("%s: text[%d] `%c': stack[%ld] out of bounds", 
 			name, pc, text[pc], (long)(sp - stack));
 		break;
