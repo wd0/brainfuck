@@ -12,7 +12,7 @@ enum { STACKSIZE = 30000 };
 const char *
 load(FILE *fin) {
     enum { DEFAULT_BUFSIZE = 8 };
-    char *program = emalloc(DEFAULT_BUFSIZE);
+    char *text = emalloc(DEFAULT_BUFSIZE);
     size_t bufsize = DEFAULT_BUFSIZE; 
     size_t i;
     int c;
@@ -20,47 +20,128 @@ load(FILE *fin) {
     for (i = 0; (c = fgetc(fin)) != EOF; ++i) {
 	if (bufsize - 2 <= i) { 
 	    bufsize *= 2;
-	    program = realloc(program, bufsize);
+	    text = realloc(text, bufsize);
 	}
-	program[i] = c;
+	text[i] = c;
     }
-    program[i] = '\0';
+    text[i] = '\0';
 
-    return program;
+    return text;
 }
 
-enum { EXEC_ILL = -2, EXEC_DONE = -1 };
+enum { BF_ERR = -3, EXEC_ILL = -2, EXEC_DONE = -1 };
+
+char
+peek(char *sp) {
+    return *sp;
+}
+
+/* Function pointers */
 int
-jmp(const char *program, int pc, char direction) {
-    int offset;
+unconditional(int n) {
+    return (n = 1);
+}
+
+int
+iszero(int n) {
+    return n == 0;
+}
+
+int
+isnonzero(int n) {
+    return n != 0;
+}
+/* End function pointers */
+
+typedef struct {
+    const char *text;
+    char *stack;
+    char *sp;
+    int pc;
+    int nesting;
+} Prog;
+
+typedef int (*Fcond)(int n);
+
+/* TODO: This currently jumps to the 'next' bracket it finds. It needs to jump
+   to the -matching- bracket. */
+
+int
+jmp(const char *text, int pc, char *sp, char direction, Fcond cond) {
+    int offset = 0;
+    int nesting = 0;
     int i;
 
-    if (direction == '>') {
-	for (i = pc; program[i]; ++i)
-	    if (program[i] == ']') {
-		offset = (i - pc) + 1; 
-		break;
-	    }
-	if (program[i] == '\0')
-	    return EXEC_ILL; /* No closing ']' */
-    } else if (direction == '<') {
-	for (i = pc; i >= 0; --i)
-	    if (program[i] == '[') {
-		offset = (i - pc) - 1; 
-		break;
-	    }
-	if (i == 0)
-	    return EXEC_ILL; /* No opening '[' */
-    }
+    if (!cond(peek(sp)))
+	return pc;
 
-    return pc;
+    switch (direction) {
+	case '>':
+	warn("jmp(pc = %d, '<')", pc);
+	for (i = pc + 1; ;  ++i) {
+	    putchar(text[i]);
+	    if (text[i] == ']' && nesting == 0) {
+		    offset = i - pc; 
+		    warn("offset = %d;", offset);
+		    return pc + offset;
+	    } else if (text[i] == ']') {
+		warn("(--) nesting = %d", nesting);
+		--nesting;
+	    } else if (text[i] == '[') {
+		warn("(++) nesting = %d", nesting);
+		++nesting;
+	    }
+	}
+	if (text[i] == '\0')
+	    return EXEC_ILL; /* No closing ']' */
+	break; 
+
+	case '<':
+	warn("jmp(pc = %d, '<')", pc);
+	for (i = pc - 1; i >= 0; --i) {
+	    putchar(text[i]);
+	    if (text[i] == '[' && nesting == 0) {
+		offset = -(pc - i); 
+		warn("offset = %d", offset);
+		return offset;
+	    } else if (text[i] == '[') {
+		warn("(--) nesting = %d", nesting);
+		--nesting;
+	    } else if (text[i] == ']') {
+		warn("(++) nesting = %d", nesting);
+		++nesting;
+	    } 
+
+	}
+	if (i < 0)
+	    return EXEC_ILL; /* No opening '[' */
+	break;
+
+	default: 
+	    warn("jmp(..., %c): not a legal jmp call", direction);
+	    return BF_ERR; 
+	}
+
+    warn("ret = %d", pc + offset);
+    return pc + offset;
 }
 
+/*
+   int
+   jz(const char *program, int pc, char *sp, char *direction) {
+   if (peek(sp) == 0)
+   }
+
+   int
+   jnz(const char *program, int pc, char *sp, char *direction) {
+   }
+ */
+
 int
-execute(const char *program, char **sp, int pc) {
-    const char op = program[pc];
+execute(const char *text, char **sp, int pc) {
+    const char op = text[pc];
     switch (op) {
-    	/* Ops */
+	/* Ops */
 	case '>':
 	    ++*sp;
 	    break;
@@ -80,72 +161,77 @@ execute(const char *program, char **sp, int pc) {
 	    **sp = getchar();
 	    break;
 	case '[':
-	    pc = jmp(program, pc, '>');
+	    pc = jmp(text, pc, *sp, '>', iszero);
 	    break;
 	case ']':
-	    pc = jmp(program, pc, '<');
+	    pc = jmp(text, pc, *sp, '<', isnonzero);
 	    break;
 
-	/* Ignore */
-	case '\n':
-	    break;
-	case ' ':
-	    break;
-
-	/* Special */
+	    /* Special */
 	case '\0':
 	    return EXEC_DONE;
 	    break;
 	default: 
-	    return EXEC_ILL;
+	    break;
     }
 
     return pc;
 }
 
 int
-run(const char *program) {
+run(Prog *p) {
     char base[STACKSIZE] = { 0 };
-    char *sp = base;
-    int pc;
+    p->stack = base;
+    p->sp = p->stack;
+    p->nesting = 0;
 
-    for (pc = 0; (pc = execute(program, &sp, pc)) != EXEC_DONE; ++pc) {
-	if (pc == EXEC_ILL) {
-	    warn("illegal instruction `%c'", program[pc]);
+    int status; 
+
+    for (p->pc = 0; (p->pc = execute(p->text, &p->stack, p->pc)) != EXEC_DONE; ++p->pc) {
+	if (p->pc <= -2)
+	    if (p->pc == EXEC_ILL) {
+		warn("illegal instruction `%c'", p->text[p->pc]);
+		break;
+	    }
+	if (p->pc == BF_ERR) {
+	    warn("brainfuck interpreter error: instruction `%c' failed", p->text[p->pc]);
 	    break;
 	}
     }
+    status = p->pc;
 
-    return pc;
+    return status;
 }
 
 
 int
 main(int argc, char **argv) {
     char *filename;
-    const char *program;
     FILE *fin;
     int status = 0;
 
+    Prog program;
+    Prog *p = &program;
+
     if (argc > 1) {
-	while (--argc > 1) {
+	while (--argc) {
 	    filename = *++argv;
 	    if ((fin = fopen(filename, "r")) == NULL) {
 		warn("couldn't open %s:", filename);
 		status = 1;
 		continue;
 	    }
-	    program = load(fin);
+	    p->text = load(fin);
 	    fclose(fin);
-	    run(program);
-	    if (program)
-		free(program);
+	    run(p);
+	    if (p->text)
+		free(p->text);
 	}
     } else {
-	program = load(stdin);
-	run(program);
-	if (program) 
-	    free(program);
+	p->text = load(stdin);
+	run(p);
+	if (p->text) 
+	    free(p->text);
     }
 
     return status;
