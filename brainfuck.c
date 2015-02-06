@@ -5,14 +5,6 @@
 enum { STACKSIZE = 30000 };
 enum { EXEC_MEMERR = -4, BF_ERR = -3, EXEC_ILL = -2, EXEC_DONE = -1 };
 
-typedef struct {
-    const char *name;
-    const char *text;
-    char *stack;
-    char *sp;
-    int pc;
-} Prog;
-
 /* Program flow: */
 /* load: A program is read completely in from a file. */
 /* run: all of a program's instructions are executed. */
@@ -39,7 +31,6 @@ load(FILE *fin) {
     return text;
 }
 
-
 char
 peek(char *sp) {
     return *sp;
@@ -65,12 +56,12 @@ isnonzero(int n) {
 /* End function pointers */
 
 int
-jmp(const char *text, int pc, char *sp, Fcond cond) {
+jmp(const char *text, int pc, char *sp, Fcond jmpcond) {
     int offset = 0;
     int nesting = 0;
     int i;
 
-    if (!cond(peek(sp)))
+    if (!jmpcond(peek(sp)))
 	return pc;
 
     switch (text[pc]) {
@@ -90,7 +81,7 @@ jmp(const char *text, int pc, char *sp, Fcond cond) {
 		return EXEC_ILL; /* No closing ']' */
 	    break; 
 
-	    /* Jump backwards to matching '['. */
+	/* Jump backwards to matching '['. */
 	case ']':
 	    for (i = pc - 1; i >= 0; --i) {
 		if (text[i] == '[' && nesting == 0) {
@@ -115,12 +106,10 @@ jmp(const char *text, int pc, char *sp, Fcond cond) {
 
 got_offset:
     return pc + offset;
-
 }
 
 int
 execute(const char *text, const char *stack, char **sp, int pc) {
-
     const char op = text[pc];
     switch (op) {
 	/* Operators */
@@ -166,42 +155,39 @@ execute(const char *text, const char *stack, char **sp, int pc) {
 }
 
 int
-run(Prog *p) {
+run(const char *text, const char *name) {
     char base[STACKSIZE] = { 0 };
-    p->stack = base;
-    p->sp = p->stack;
+    char *stack = base;
+    char *sp = stack;
+    int pc;
     int status; 
 
-    for (p->pc = 0; 
-	    (p->pc = execute(p->text, p->stack, &p->sp, p->pc)) != EXEC_DONE;
-	    ++p->pc) {
-	if (p->pc <= -2) {
-	    if (p->pc == EXEC_ILL) {
-		warn("%s: illegal instruction `%c'", p->name, p->text[p->pc]);
+    for (pc = 0; (pc = execute(text, stack, &sp, pc)) != EXEC_DONE; ++pc) {
+	if (pc <= -2) { /* Execute returned an error */
+	    if (pc == EXEC_ILL) {
+		warn("%s: illegal instruction `%c'", name, text[pc]);
 		break;
-	    } else if (p->pc == BF_ERR) {
-		warn("%s: brainfuck interpreter error: instruction `%c' failed", p->name, p->text[p->pc]);
+	    } else if (pc == BF_ERR) {
+		warn("%s: brainfuck interpreter error: instruction `%c' failed", name, text[pc]);
 		break;
-	    } else if (p->pc == EXEC_MEMERR) {
-		warn("%s: memory access %p out of bounds", p->name, p->sp);
+	    } else if (pc == EXEC_MEMERR) {
+		warn("%s: memory access %p out of bounds", name, sp);
 		break;
 	    }
-	   
 	}
     }
 
-    status = p->pc;
+    status = pc;
     return status;
 }
 
 int
 main(int argc, char **argv) {
     const char *filename;
+    const char *text;
     FILE *fin;
     int status = 0;
-
-    Prog program;
-    Prog *p = &program;
+    int ret = 0;
 
     if (argc > 1) {
 	while (--argc) {
@@ -211,19 +197,22 @@ main(int argc, char **argv) {
 		status = 1;
 		continue;
 	    }
-	    p->text = load(fin);
+	    text = load(fin);
 	    fclose(fin);
-	    p->name = filename;
-	    run(p);
-	    if (p->text)
-		free((void *)p->text);
+	    ret = run(text, filename);
+	    if (ret != 0) 
+		status = 1;
+	    if (text)
+		free((void *)text);
 	}
     } else {
-	p->text = load(stdin);
-	p->name = "stdin";
-	run(p);
-	if (p->text) 
-	    free((void *)p->text);
+	text = load(stdin);
+	filename = "stdin";
+	ret = run(text, filename);
+	if (ret != 0) 
+	    status = 1;
+	if (text) 
+	    free((void *)text);
     }
 
     return status;
