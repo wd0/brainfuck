@@ -56,21 +56,22 @@ isnonzero(int n) {
 /* End function pointers */
 
 int
-jmp(const char *text, int pc, char *sp, Fcond jmpcond) {
+jmp(const char *text, int *pc, char *sp, Fcond jmpcond) {
     int offset = 0;
     int nesting = 0;
+    int status = 0;
     int i;
 
     if (!jmpcond(peek(sp)))
-	return pc;
+	return status;
 
-    switch (text[pc]) {
+    switch (text[*pc]) {
 	/* Jump forwards to matching ']'. */
 	case '[':
-	    for (i = pc + 1; text[i];  ++i) {
+	    for (i = *pc + 1; text[i];  ++i) {
 		if (text[i] == ']' && nesting == 0) {
-		    offset = (i - pc - 1) - 1; 
-		    goto got_offset; 
+		    offset = (i - *pc - 1) - 1; 
+		    *pc += offset;
 		} else if (text[i] == ']') {
 		    --nesting;
 		} else if (text[i] == '[') {
@@ -78,15 +79,15 @@ jmp(const char *text, int pc, char *sp, Fcond jmpcond) {
 		} 
 	    }
 	    if (text[i] == '\0')
-		return EXEC_ILL; /* No closing ']' */
+		status = EXEC_ILL; /* No closing ']' */
 	    break; 
 
 	/* Jump backwards to matching '['. */
 	case ']':
-	    for (i = pc - 1; i >= 0; --i) {
+	    for (i = *pc - 1; i >= 0; --i) {
 		if (text[i] == '[' && nesting == 0) {
-		    offset = -(pc - i - 1) - 1; 
-		    goto got_offset; 
+		    offset = -(*pc - i - 1) - 1; 
+		    *pc += offset;
 		} else if (text[i] == '[') {
 		    --nesting;
 		} else if (text[i] == ']') {
@@ -95,33 +96,38 @@ jmp(const char *text, int pc, char *sp, Fcond jmpcond) {
 
 	    }
 	    if (i < 0)
-		return EXEC_ILL; /* No opening '[' */
+		status = EXEC_ILL; /* No opening '[' */
 	    break;
 
 	default: 
-	    warn("jmp(%c): not a legal jmp call", text[pc]);
-	    return BF_ERR; 
+	    warn("jmp(%c): not a legal jmp call", text[*pc]);
+	    status = BF_ERR; 
 	    break;
     }
 
-got_offset:
-    return pc + offset;
+    return status;
 }
 
 int
-execute(const char *text, const char *stack, char **sp, int pc) {
-    const char op = text[pc];
+execute(const char *text, const char *stack, char **sp, int *pc) {
+    const char op = text[*pc];
+    int status = 0;
+
     switch (op) {
 	/* Operators */
 	case '>':
 	    ++*sp;
-	    if ((long)(*sp - stack) + 1 > STACKSIZE)
-		return EXEC_MEMERR;
+	    if ((long)(*sp - stack) + 1 > STACKSIZE) {
+		status = EXEC_MEMERR;
+		--*sp;
+	    }
 	    break;
 	case '<':
 	    --*sp;
-	    if (*sp < stack)
-		return EXEC_MEMERR;
+	    if (*sp < stack) {
+		status = EXEC_MEMERR;
+		++*sp;
+	    }
 	    break;
 	case '+':
 	    ++**sp;
@@ -136,42 +142,43 @@ execute(const char *text, const char *stack, char **sp, int pc) {
 	    **sp = getchar();
 	    break;
 	case '[':
-	    pc = jmp(text, pc, *sp, iszero);
+	    status = jmp(text, pc, *sp, iszero);
 	    break;
 	case ']':
-	    pc = jmp(text, pc, *sp, isnonzero);
+	    status = jmp(text, pc, *sp, isnonzero);
 	    break;
 
-	/* Special */
+	    /* Special */
 	case '\0':
-	    return EXEC_DONE;
+	    status = EXEC_DONE;
 	    break;
 
 	default: 
 	    break;
     }
 
-    return pc;
+    return status;
 }
 
 int
 run(const char *text, const char *name) {
-    char base[STACKSIZE] = { 0 };
-    char *stack = base;
+    char stack[STACKSIZE] = { 0 };
     char *sp = stack;
     int pc;
-    int status; 
+    int status = 0; 
 
-    for (pc = 0; (pc = execute(text, stack, &sp, pc)) != EXEC_DONE; ++pc) {
-	if (pc <= -2) { /* Execute returned an error */
-	    if (pc == EXEC_ILL) {
-		warn("%s: illegal instruction `%c'", name, text[pc]);
+    for (pc = 0; status != EXEC_DONE; ++pc) {
+	status = execute(text, stack, &sp, &pc);
+	if (status <= -2) {
+	    if (status == EXEC_ILL) {
+		warn("%s: text[%d] `%c': illegal instruction", name, pc, text[pc]);
 		break;
-	    } else if (pc == BF_ERR) {
-		warn("%s: brainfuck interpreter error: instruction `%c' failed", name, text[pc]);
+	    } else if (status == BF_ERR) {
+		warn("%s: text[%d]: brainfuck interpreter error", name, pc);
 		break;
 	    } else if (pc == EXEC_MEMERR) {
-		warn("%s: memory access %p out of bounds", name, sp);
+		warn("%s: text[%d] `%c': stack[%ld] out of bounds", 
+			name, pc, text[pc], (long)(sp - stack));
 		break;
 	    }
 	}

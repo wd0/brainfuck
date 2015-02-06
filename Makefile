@@ -1,7 +1,7 @@
 CC = clang
 SRC = brainfuck.c err/err.c
 NAME = brainfuck
-CFLAGS = -g -Wall -Wpedantic -Wextra
+CFLAGS = -Wall -Wpedantic -Wextra
 
 
 all:	
