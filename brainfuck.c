@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "err/err.h"
+#include "err.h"
 
 enum { STACKSIZE = 30000 };
 enum { EXEC_MEMERR = -4, BF_ERR = -3, EXEC_ILL = -2, EXEC_DONE = -1 };
