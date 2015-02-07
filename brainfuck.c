@@ -180,7 +180,6 @@ run(const char *text, const char *name) {
 	}
     }
 
-    status = pc;
     return status;
 }
 
